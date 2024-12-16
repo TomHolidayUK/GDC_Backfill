@@ -13,12 +13,12 @@ app.debug = True
 
 
 logging.basicConfig(
-    filename='/var/log/backfill.log',
+    filename='/var/log/backfill.log', # MAKE THIS FILE AND GIVE USER PERMISSIONS (SEE LOGS WITH 'tail -f /var/log/backfill.log') 
     level=logging.DEBUG,
     format='%(asctime)s %(levelname)s:%(message)s'
 )
 
-miniseed_dir = "/var/cache/guralp/miniseed_fed"
+miniseed_dir = "/var/cache/guralp/miniseed_fed" # CHANGE THIS TO YOUR SAVE LOCATION!
 
 trim_data = True # toggle whether to trim .mseed files or not (trim feature is currently under development and is unsafe)
 
@@ -194,7 +194,7 @@ def main():
         return "No files found matching the backfill request times.", 404
 
     # Now that we have the relevant file(s), combine them into one .mseed file for sending
-    output_file = f"/var/cache/guralp/miniseed_fed/backfill_{seedname}_{start}_{end}.mseed"
+    output_file = f"{miniseed_dir}/backfill_{seedname}_{start}_{end}.mseed"
     combine_streams(good_files, output_file)
 
     # Send as HTTP response
