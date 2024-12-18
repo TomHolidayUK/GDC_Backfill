@@ -204,8 +204,90 @@ def main():
         logging.info("Returning 404")
         return "Backfill file failed to generate.", 404
 
+# Store active challenges (normally, you'd use a Redis cache, but this is simple for now)
+active_challenges = {}
+
+# Dummy user database (passwords should be hashed in reality, not plain text)
+USER_DATABASE = {
+    'tom': 'heskey',  # Example: Tom's password is "heskey"
+}
+
+@app.route('/request_challenge/', methods=['GET'])
+def request_challenge():
+    logging.info(f"request_challenge called")
+    username = request.args.get('username')
+    if username not in USER_DATABASE:
+        logging.info("user not found")
+        return "error - User not found", 404
+
+
+    # Generate a random challenge (use something stronger in production)
+    challenge = str(random.randint(100000, 999999)) + str(int(time.time()))
+    active_challenges[username] = challenge  # Store the challenge for this user
+    logging.info(f"Challenge for {username}: {challenge}")  # For debugging
+    return jsonify({'challenge': challenge})
+
+
+# Step 2: Verify the client's response
+@app.route('/verify_response/', methods=['POST'], endpoint='verify_response')
+def verify_response():
+    logging.info(f"verify_response called")
+    data = request.json
+    username = data.get('username')
+    client_response = data.get('response')
+
+    logging.info(f"client {username} has responded with {client_response}")
+
+    if not username or not client_response:
+        logging.info('error - Missing username or response')
+        return jsonify({'error': 'Missing username or response'}), 400
+
+    if username not in USER_DATABASE:
+        logging.info('error - User not found')
+        return jsonify({'error': 'User not found'}), 404
+
+    # Get the challenge for this user
+    challenge = active_challenges.get(username)
+    if not challenge:
+        logging.info('error - Challenge not found')
+        return jsonify({'error': 'Challenge not found'}), 400
+
+    # Get the user's stored password (hash it in production)
+    password = USER_DATABASE[username]
+    logging.info(f"password from database: {password}")
+
+    # Recreate the expected response using the same method as the client
+    expected_response = hashlib.sha256((challenge + password).encode()).hexdigest()
+    logging.info(f"expected_reponse = {expected_response}")
+
+
+    if client_response == expected_response:
+        logging.info('message - Login successful!')
+        return jsonify({'message': 'Login successful!'}), 200
+    else:
+        logging.info('error - Invalid response')
+        return jsonify({'error': 'Invalid password'}), 401
+
+
+@app.route('/login/', methods=['GET'])
+def login():
+    logging.info("login start")
+    username = request.args.get('username')
+    if not username:
+        return "error - Username is required", 400
+    if not password:
+        return "error - Password is required", 400
+    password = request.args.get('password')
+    logging.info(f"login success for {username} with password {password}")
+    return "Login function executed successfully", 200
+
+
+@app.before_request
+def log_request_info():
+    logging.info(f"Request: {request.method} {request.path}")
+
+
 
 if __name__ == "__main__":
   #  app.run()
     app.run(host='0.0.0.0', port=8080)
-                                                        
