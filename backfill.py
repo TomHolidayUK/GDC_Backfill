@@ -5,7 +5,13 @@ import os
 from obspy import read, Stream
 from obspy.core import UTCDateTime
 
-from flask import Flask, request, send_file, render_template_string
+import random
+import time
+import hashlib
+
+from pymongo import MongoClient
+
+from flask import Flask, request, send_file, render_template_string, jsonify
 app = Flask(__name__)
 
 import logging
@@ -13,12 +19,15 @@ app.debug = True
 
 
 logging.basicConfig(
-    filename='/var/log/backfill.log', # MAKE THIS FILE AND GIVE USER PERMISSIONS (SEE LOGS WITH 'tail -f /var/log/backfill.log') 
-    level=logging.DEBUG,
+    filename='/var/log/backfill.log',
+    level=logging.INFO,
     format='%(asctime)s %(levelname)s:%(message)s'
 )
 
-miniseed_dir = "/var/cache/guralp/miniseed_fed" # CHANGE THIS TO YOUR SAVE LOCATION!
+
+############################################# Backfill #############################################################
+
+miniseed_dir = "/var/cache/guralp/miniseed" # CHANGE THIS TO YOUR SAVE LOCATION!
 
 trim_data = True # toggle whether to trim .mseed files or not (trim feature is currently under development and is unsafe)
 
@@ -204,22 +213,49 @@ def main():
         logging.info("Returning 404")
         return "Backfill file failed to generate.", 404
 
+
+###########################################################################################
+
+###########################################################################################
+
+
+
+
+
+#################################### Login Handling #######################################
+
 # Store active challenges (normally, you'd use a Redis cache, but this is simple for now)
 active_challenges = {}
 
-# Dummy user database (passwords should be hashed in reality, not plain text)
-USER_DATABASE = {
-    'tom': 'heskey',  # Example: Tom's password is "heskey"
-}
+# the details below are only needed if using a local database (but currently we are using a MongoDb Atlas cloud DB)
+#USER_FILE_PATH = '/home/users.txt'
+#USER_DATABASE = {}
+
+def load_user_database(file_path):
+    """ Load user database from a file and populate the USER_DATABASE. """
+    logging.info("load_user_database")
+    try:
+        with open(file_path, 'r') as f:
+            for line in f:
+                # Split each line on ':' to separate username and hashed password
+                username, hashed_password = line.strip().split(':')
+                logging.info(f"adding to db, username = {username}, password = {hashed_password}")
+                USER_DATABASE[username] = hashed_password
+    except Exception as e:
+        logging.error(f"Failed to load user database: {e}")
+        raise
+
 
 @app.route('/request_challenge/', methods=['GET'])
 def request_challenge():
     logging.info(f"request_challenge called")
+
+    load_user_database(USER_FILE_PATH)
+
     username = request.args.get('username')
     if username not in USER_DATABASE:
         logging.info("user not found")
         return "error - User not found", 404
-
 
     # Generate a random challenge (use something stronger in production)
     challenge = str(random.randint(100000, 999999)) + str(int(time.time()))
@@ -252,14 +288,17 @@ def verify_response():
         logging.info('error - Challenge not found')
         return jsonify({'error': 'Challenge not found'}), 400
 
-    # Get the user's stored password (hash it in production)
-    password = USER_DATABASE[username]
-    logging.info(f"password from database: {password}")
+#    # local password - discontinued for now (using MongoDB instead)
+#    local_password = USER_DATABASE[username]
+#    logging.info(f"local password: {local_password}")
 
-    # Recreate the expected response using the same method as the client
+    password = mongodb_connect(username)
+
+    if password == None:
+        return jsonify({'error': 'Username not found in MongoDB'}), 401
+
     expected_response = hashlib.sha256((challenge + password).encode()).hexdigest()
     logging.info(f"expected_reponse = {expected_response}")
-
 
     if client_response == expected_response:
         logging.info('message - Login successful!')
@@ -269,18 +308,35 @@ def verify_response():
         return jsonify({'error': 'Invalid password'}), 401
 
 
-@app.route('/login/', methods=['GET'])
-def login():
-    logging.info("login start")
-    username = request.args.get('username')
-    if not username:
-        return "error - Username is required", 400
-    if not password:
-        return "error - Password is required", 400
-    password = request.args.get('password')
-    logging.info(f"login success for {username} with password {password}")
-    return "Login function executed successfully", 200
+@app.route('/request_data/', methods=['GET'])
+def request_data():
+    logging.info("Data requested")
+    files = os.listdir(miniseed_dir)
+    return jsonify(files)
 
+def mongodb_connect(username):
+    logging.info("mongodb connect")
+    connection_string = os.getenv('MONGO_CONNECTION_STRING')
+    logging.info(f"connection string {connection_string}")
+    client = MongoClient(connection_string)
+
+    db = client['Guralp']
+    collection = db['GDC User Details']
+
+    #documents = collection.find()
+
+    #for document in documents:
+    #    logging.info(document)
+
+    user = collection.find_one({"username": username})
+
+    if user:
+        password = user.get('password')
+        logging.info(f"MongoDB Password for {username}: {password}")
+        return password
+    else:
+        logging.info(f"User {username} not found")
+        return None
 
 @app.before_request
 def log_request_info():
